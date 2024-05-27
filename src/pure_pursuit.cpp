@@ -178,22 +178,21 @@ void PurePursuit::get_waypoint() {
     int final_i = -1;
     int start = waypoints.index; //waypoints.index의 초기값이 설정 안되어있는 것 같음!!!!!????
     int end = (waypoints.index + waypoint_search_range) % num_waypoints; //waypoint_search_range = 500
-'''
-num_waypoints = 312
-start       end    
-0           500 % 312 = 188
-1           501 % 312 = 189
-2           502 % 312 = 190
-123         623 % 312 = 311
 
-start < end
-----------------------------
-end < start // If we need to loop around
-124         624 % 312 = 0
-300         800 % 312 = 176
-311         811 % 312 = 187
+//num_waypoints = 312
+//start       end    
+//0           500 % 312 = 188
+//1           501 % 312 = 189
+//2           502 % 312 = 190
+//123         623 % 312 = 311
 
-'''
+//start < end
+//----------------------------
+//end < start // If we need to loop around
+//124         624 % 312 = 0
+//300         800 % 312 = 176
+//311         811 % 312 = 187
+
 
 
 
