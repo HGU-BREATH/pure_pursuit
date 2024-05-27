@@ -56,7 +56,7 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     steering_limit = this->get_parameter("steering_limit").as_double();
     velocity_percentage = this->get_parameter("velocity_percentage").as_double();
     /////내가 추가
-    waypoint_search_range = this->get_parameter("waypoint_search_range").as_double();  // 새로운 파라미터 초기화
+    waypoint_search_range = this->get_parameter("waypoint_search_range").as_int();  // 새로운 파라미터 초기화
 
     // waypoints.index 초기화
     waypoints.index = 0;  // 초기값을 0으로 설정

@@ -67,7 +67,7 @@ class PurePursuit : public rclcpp::Node {
     double steering_limit;
     double velocity_percentage;
     double curr_velocity = 0.0;
-    double waypoint_search_range;  // 새로운 파라미터 추가
+    int waypoint_search_range;  // 새로운 파라미터 추가
     bool emergency_breaking = false;
     std::string lane_number = "left";  // left or right lane
 
