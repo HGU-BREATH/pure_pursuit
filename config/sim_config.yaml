@@ -1,6 +1,6 @@
 pure_pursuit:
   ros__parameters:
-    waypoints_path: "/home/arise/sim_ws/src/pure_pursuit/racelines/e7_floor5_square.csv"
+    waypoints_path: "/home/arise/sim_ws/src/pure_pursuit/racelines/e7_floor5.csv"
     odom_topic: "/ego_racecar/odom"
     car_refFrame: "ego_racecar/base_link"
     global_refFrame: "map"
@@ -16,7 +16,7 @@ pure_pursuit:
     K_p: 0.5
     steering_limit: 25.0
     velocity_percentage: 1.0 # the limit, can only do 1 lap with clean tires
-
+    waypoint_search_range: 500  # 새로운 파라미터 추가  end = way
 waypoint_visualizer_node:
   ros__parameters:
-    waypoints_path: "/home/arise/sim_ws/src/pure_pursuit/racelines/e7_floor5_square.csv"
+    waypoints_path: "/home/arise/sim_ws/src/pure_pursuit/racelines/e7_floor5.csv"

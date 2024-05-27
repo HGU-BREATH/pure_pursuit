@@ -12,7 +12,7 @@ pure_pursuit:
     # Lookahead is computed using the following: lookahead = min(max(min_lookahead, max_lookahead * curr_velocity / lookahead_ratio), max_lookahead);
     # min_lookahead: 0.5 # for square track
     min_lookahead: 1.0 # for larger track
-    max_lookahead: 3.0 # lookahead when the car is going around max velocity
+    max_lookahead: 2.0 # lookahead when the car is going around max velocity
     lookahead_ratio: 8.0 # approximately the max velocity
     # K_p: 0.25 # for square track
     K_p: 0.15 # for big track

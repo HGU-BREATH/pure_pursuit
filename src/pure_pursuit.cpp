@@ -39,7 +39,7 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     this->declare_parameter("steering_limit", 25.0);
     this->declare_parameter("velocity_percentage", 0.6);
     //내가 추가
-    this->declare_parameter("waypoint_search_range", 500);  // 새로운 파라미터 선언
+    this->declare_parameter("waypoint_search_range", 500.0);  // 새로운 파라미터 선언
 
     // Default Values
     waypoints_path = this->get_parameter("waypoints_path").as_string();
