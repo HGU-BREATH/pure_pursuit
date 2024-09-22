@@ -188,6 +188,19 @@ void PurePursuit::new_get_waypoint(){
     //세찬이의 함수를 받아와서
     //현재 위치와 가장 가까운 인덱스 계산
     //이때 MAX_LOOKAHEDAD 보다 작은 인덱스를 불러와야함
+    double lookahead_distance = 0;
+    
+    //double calculated_distance = 
+    if lookahead_distance == calculated_distance{
+        //해당 웨이포인트로 설정
+        waypoints.index = final_i;
+
+    }
+    if !check_block(){ //장애물에 안걸리면
+        
+    }
+
+
 }
 
 
