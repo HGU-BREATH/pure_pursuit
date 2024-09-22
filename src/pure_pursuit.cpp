@@ -219,8 +219,8 @@ void PurePursuit::get_waypoint() {
     // Main logic: Search within the next 500 points
     double longest_distance = 0;
     int final_i = -1;
-    int start = waypoints.index; //waypoints.index의 초기값이 설정 안되어있는 것 같음!!!!!????
-    int end = (waypoints.index + waypoint_search_range) % num_waypoints; //waypoint_search_range = 500
+    int start = waypoints.index; 
+    int end = (waypoints.index + waypoint_search_range) % num_waypoints; //default waypoint_search_range = 500
 
 //num_waypoints = 312
 //start       end    
