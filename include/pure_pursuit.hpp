@@ -119,4 +119,10 @@ class PurePursuit : public rclcpp::Node {
     void odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr odom_submsgObj);
 
     void timer_callback();
+
+    void check_block(); //세찬
+
+    void set_velocity(); //원빈
+    void new_get_waypoint(); //선환
+
 };

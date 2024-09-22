@@ -87,7 +87,7 @@ double PurePursuit::to_degrees(double radians) {
     return degrees = radians * 180.0 / M_PI;
 }
 
-double PurePursuit::p2pdist(double &x1, double &x2, double &y1, double &y2) { //포인트 간의 거리
+double PurePursuit::p2pdist(double &x1, double &x2, double &y1, double &y2) { //포인트 간의 거리계산
     double dist = sqrt(pow((x2 - x1), 2) + pow((y2 - y1), 2));
     return dist;
 }
@@ -172,7 +172,50 @@ void PurePursuit::visualize_current_point(Eigen::Vector3d &point) {
     vis_current_point_pub->publish(marker);
 }
 
+void PurePursuit::check_block(){
+    
+    //세찬
+    //웨이포인트와 차량으 현재 위치를 받아와서 그 사이에 장애물 유무 판단
+    //장애물 BUBBLE까지 고려.
+    //리턴 : true or false
+}
+void PurePursuit::set_velocity(){
+    //원빈
+    //웨이포인트까지의 거리를 계산해서 velocity를 계산하는 함수 작성
+}
+void PurePursuit::new_get_waypoint(){
+    //선환
+    //세찬이의 함수를 받아와서
+    //현재 위치와 가장 가까운 인덱스 계산
+    //이때 MAX_LOOKAHEDAD 보다 작은 인덱스를 불러와야함
+}
+
+
 void PurePursuit::get_waypoint() {
+    /*start와 end의 정의:
+
+    start: 현재 경로 탐색이 시작되는 인덱스 (waypoints.index).
+    end: start부터 500개의 포인트를 탐색할 때 그 끝 인덱스 ((waypoints.index + 500) % num_waypoints).
+    여기서 num_waypoints는 전체 경로 포인트의 개수입니다. % num_waypoints를 사용
+해 인덱스가 num_waypoints를 초과하지 않도록 순환 구조를 유지하고 있습니다.
+
+    if end < start가 참인 경우 (배열의 끝을 넘는 경우):
+
+    이 조건은 end가 start보다 작을 때, 즉 경로가 배열의 끝을 넘어서 다시 배열의 처음으로 돌아가는 상황을 나타냅니다. 순환 배열에서는 이런 상황이 발생할 수 있으>며, 이때 경로를 두 번에 나누어 탐색해야 합니다.
+    start부터 배열의 끝까지 (start에서 num_waypoints - 1까지)를 탐색.
+    배열의 처음부터 end까지 (0에서 end - 1까지)를 탐색.
+
+    if end >= start인 경우 (배열의 끝을 넘지 않는 경우):
+
+    경로가 배열의 끝을 넘지 않으면, 단순히 start부터 end까지 한 번에 탐색하면 됩
+니다.
+    요약:
+    end < start: 경로 탐색 범위가 배열의 끝을 넘어가서 다시 처음부터 탐색해야 하
+는 경우.
+    end >= start: 경로 탐색 범위가 배열의 중간에서 끝나는 경우로, 순차적으로 탐>색할 수 있습니다.
+    */
+
+
     // Main logic: Search within the next 500 points
     double longest_distance = 0;
     int final_i = -1;
