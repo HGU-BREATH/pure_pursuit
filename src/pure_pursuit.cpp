@@ -24,7 +24,7 @@
 #include "visualization_msgs/msg/marker_array.hpp"
 
 PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
-    // initialise parameters
+    // 파라미터 선언
     this->declare_parameter("waypoints_path", "/sim_ws/src/pure_pursuit/racelines/e7_floor5.csv");
     this->declare_parameter("odom_topic", "/ego_racecar/odom");
     this->declare_parameter("car_refFrame", "ego_racecar/base_link");
@@ -35,13 +35,13 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     this->declare_parameter("min_lookahead", 0.5);
     this->declare_parameter("max_lookahead", 1.0);
     this->declare_parameter("lookahead_ratio", 8.0);
-    this->declare_parameter("K_p", 0.5);
+    this->declare_parameter("K_p", 1.0); // K_p 파라미터 선언 및 초기값 설정
     this->declare_parameter("steering_limit", 25.0);
     this->declare_parameter("velocity_percentage", 0.6);
-    //내가 추가
-    this->declare_parameter("waypoint_search_range", 500.0);  // 새로운 파라미터 선언
+    this->declare_parameter("waypoint_search_range", 500);
+    this->declare_parameter("wheelbase", 0.33); // wheelbase를 파라미터로 선언
 
-    // Default Values
+    // 파라미터 초기화
     waypoints_path = this->get_parameter("waypoints_path").as_string();
     odom_topic = this->get_parameter("odom_topic").as_string();
     car_refFrame = this->get_parameter("car_refFrame").as_string();
@@ -52,17 +52,20 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     min_lookahead = this->get_parameter("min_lookahead").as_double();
     max_lookahead = this->get_parameter("max_lookahead").as_double();
     lookahead_ratio = this->get_parameter("lookahead_ratio").as_double();
-    K_p = this->get_parameter("K_p").as_double();
+    K_p = this->get_parameter("K_p").as_double(); // K_p 파라미터 초기화
     steering_limit = this->get_parameter("steering_limit").as_double();
     velocity_percentage = this->get_parameter("velocity_percentage").as_double();
-    /////내가 추가
-    waypoint_search_range = this->get_parameter("waypoint_search_range").as_int();  // 새로운 파라미터 초기화
+    waypoint_search_range = this->get_parameter("waypoint_search_range").as_int();
+    wheelbase = this->get_parameter("wheelbase").as_double(); // wheelbase 파라미터 초기화
 
     // waypoints.index 초기화
-    waypoints.index = 0;  // 초기값을 0으로 설정
-    ////여기까지 내가 추가
+    waypoints.index = 0;
 
-    subscription_odom = this->create_subscription<nav_msgs::msg::Odometry>(odom_topic, 25, std::bind(&PurePursuit::odom_callback, this, _1));
+    // 변수 초기화
+    curr_velocity = 0.0;
+
+    subscription_odom = this->create_subscription<nav_msgs::msg::Odometry>(
+        odom_topic, 25, std::bind(&PurePursuit::odom_callback, this, _1));
     timer_ = this->create_wall_timer(2000ms, std::bind(&PurePursuit::timer_callback, this));
 
     publisher_drive = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic, 25);
@@ -78,16 +81,14 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
 }
 
 double PurePursuit::to_radians(double degrees) {
-    double radians;
-    return radians = degrees * M_PI / 180.0;
+    return degrees * M_PI / 180.0;
 }
 
 double PurePursuit::to_degrees(double radians) {
-    double degrees;
-    return degrees = radians * 180.0 / M_PI;
+    return radians * 180.0 / M_PI;
 }
 
-double PurePursuit::p2pdist(double &x1, double &x2, double &y1, double &y2) { //포인트 간의 거리계산
+double PurePursuit::p2pdist(double &x1, double &x2, double &y1, double &y2) {
     double dist = sqrt(pow((x2 - x1), 2) + pow((y2 - y1), 2));
     return dist;
 }
@@ -96,14 +97,13 @@ void PurePursuit::load_waypoints() {
     csvFile_waypoints.open(waypoints_path, std::ios::in);
 
     if (!csvFile_waypoints.is_open()) {
-        RCLCPP_ERROR(this->get_logger(), "Cannot Open CSV File: %s", waypoints_path);
+        RCLCPP_ERROR(this->get_logger(), "Cannot Open CSV File: %s", waypoints_path.c_str());
         return;
     } else {
         RCLCPP_INFO(this->get_logger(), "CSV File Opened");
     }
 
-    // std::vector<std::string> row;
-    std::string line, word, temp;
+    std::string line, word;
 
     while (!csvFile_waypoints.eof()) {
         std::getline(csvFile_waypoints, line, '\n');
@@ -116,9 +116,8 @@ void PurePursuit::load_waypoints() {
                     waypoints.X.push_back(std::stod(word));
                 } else if (j == 1) {
                     waypoints.Y.push_back(std::stod(word));
-                } else if (j == 2) {
-                    waypoints.V.push_back(std::stod(word));
                 }
+                // V 값을 읽지 않음
             }
             j++;
         }
@@ -126,7 +125,7 @@ void PurePursuit::load_waypoints() {
 
     csvFile_waypoints.close();
     num_waypoints = waypoints.X.size();
-    RCLCPP_INFO(this->get_logger(), "Finished loading %d waypoints from %s", num_waypoints, waypoints_path);
+    RCLCPP_INFO(this->get_logger(), "Finished loading %d waypoints from %s", num_waypoints, waypoints_path.c_str());
 
     double average_dist_between_waypoints = 0.0;
     for (int i = 0; i < num_waypoints - 1; i++) {
@@ -172,53 +171,96 @@ void PurePursuit::visualize_current_point(Eigen::Vector3d &point) {
     vis_current_point_pub->publish(marker);
 }
 
+bool PurePursuit::check_obstacle(double x, double y) {
+    // 장애물 체크 로직 구현 필요
+    // 현재는 장애물이 없다고 가정
+    return false;
+}
 
-void PurePursuit::check_obstacle(){
-    
-    //세찬
-    //웨이포인트와 차량으 현재 위치를 받아와서 그 사이에 장애물 유무 판단
-    //장애물 BUBBLE까지 고려.
-    //리턴 : true or false
-    //장애물 있으면 True / 없으면 False
+void PurePursuit::set_velocity(double steering_angle) {
+    // 최소 및 최대 속도 (m/s)
+    double minVelocity = 2.0;
+    double maxVelocity = 6.0;
+
+    // 최대 조향각 (라디안 단위)
+    double maxSteeringAngle = to_radians(steering_limit);
+
+    // reductionFactor의 최소값 설정
+    double minReductionFactor = 0.1;
+
+    // 현재 차량 위치와 웨이포인트 간의 실제 거리 계산
+    double realDistance = p2pdist(x_car_world, waypoints.X[waypoints.index],
+                                  y_car_world, waypoints.Y[waypoints.index]);
+
+    // realDistance를 mld로 제한하여 0에서 1 사이로 정규화
+    double mld = max_lookahead;
+    double effectiveDistance = std::min(std::max(realDistance, 0.0), mld);
+    double normalizedDistance = effectiveDistance / mld;
+
+    // 거리 기반 속도 계산 (비선형 함수 적용)
+    double gamma = 0.5;
+    double distanceVelocity = minVelocity + (maxVelocity - minVelocity) *
+                              pow(normalizedDistance, gamma);
+
+    // 현재 조향각의 절대값 (라디안 단위)
+    double absSteeringAngle = std::abs(steering_angle);
+
+    // cosine 함수 사용하여 감소 비율 계산
+    double reductionFactor = cos((absSteeringAngle / maxSteeringAngle) * (M_PI / 2));
+
+    // 감소 비율을 최소값과 1.0 사이로 제한
+    reductionFactor = std::max(std::min(reductionFactor, 1.0), minReductionFactor);
+
+    // 최종 속도 계산
+    double finalVelocity = distanceVelocity * reductionFactor;
+
+    // 속도를 최소 및 최대 속도로 제한
+    finalVelocity = std::max(std::min(finalVelocity, maxVelocity), minVelocity);
+
+    // 계산된 속도를 curr_velocity에 저장
+    curr_velocity = finalVelocity;
+
+    RCLCPP_INFO(this->get_logger(),
+        "Distance Velocity: %.2f m/s, Reduction Factor: %.2f, Final Velocity: %.2f m/s",
+        distanceVelocity, reductionFactor, curr_velocity);
 }
-void PurePursuit::set_velocity(){
-    //원빈
-    //웨이포인트까지의 거리를 계산해서 velocity를 계산하는 함수 작성
-}
-void PurePursuit::new_get_waypoint(){
-    //선환
-    //세찬이의 함수를 받아와서
-    //현재 위치와 가장 가까운 인덱스 계산
-    //이때 MAX_LOOKAHEDAD 보다 작은 인덱스를 불러와야함
-     // Get the current vehicle position
+
+void PurePursuit::get_waypoint() {
+    // 장애물을 고려한 웨이포인트 선택 로직
+
+    // 현재 차량 위치
+    double x_car_world = this->x_car_world;
+    double y_car_world = this->y_car_world;
 
     double longest_distance = 0;
-
-    
     int farthest_waypoint_index = -1;
     int start = waypoints.index;
     int end = (waypoints.index + waypoint_search_range) % num_waypoints;
 
-// Lookahead needs to be between the min_lookhead and the max_lookahead
+    // 전방주시 거리를 계산
     double lookahead = std::min(std::max(min_lookahead, max_lookahead * curr_velocity / lookahead_ratio), max_lookahead);
-    double dist=-1;
+
+    // 거리 차이 및 최소값 초기화
+    double dist = -1;
     double ld_diff;
-    double min_ld_diff = std::numeric_limits<double>::max();  // Initialize to a large value for comparison
-    // Function to find a safe waypoint by moving backwards
+    double min_ld_diff = std::numeric_limits<double>::max();
+
+    // 장애물이 없는 웨이포인트를 찾는 함수
     auto find_safe_waypoint = [&](int &index) {
         while (check_obstacle(waypoints.X[index], waypoints.Y[index])) {
-            index = (index > 0) ? index - 1 : num_waypoints - 1;  // Move to the previous waypoint
+            index = (index > 0) ? index - 1 : num_waypoints - 1;
 
-            // Prevent infinite loop
+            // 무한 루프 방지
             if (index == waypoints.index) {
                 RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
                 break;
             }
         }
     };
-    // Loop through waypoints and process
+
+    // 웨이포인트를 처리하는 함수
     auto process_waypoints = [&](int start_idx, int end_idx) {
-        for (int i = start_idx; i < end_idx; i++) {
+        for (int i = start_idx; i != end_idx; i = (i + 1) % num_waypoints) {
             dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
             ld_diff = lookahead - dist;
 
@@ -226,309 +268,104 @@ void PurePursuit::new_get_waypoint(){
                 min_ld_diff = ld_diff;
 
                 if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
-                    farthest_waypoint_index = i;  // No obstacle, set as the farthest waypoint
+                    farthest_waypoint_index = i;
                 } else {
-                    // Obstacle found, move to the previous waypoint
                     farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    find_safe_waypoint(farthest_waypoint_index);  // Find a safe waypoint
+                    find_safe_waypoint(farthest_waypoint_index);
                 }
             }
         }
     };
-     // Handle wrapping around waypoints
+
+    // 웨이포인트 처리
     if (end < start) {
-        process_waypoints(start, num_waypoints);  // Process from start to end of the list
-        process_waypoints(0, end);  // Process from beginning to end
+        process_waypoints(start, num_waypoints);
+        process_waypoints(0, end);
     } else {
-        process_waypoints(start, end);  // Single range
+        process_waypoints(start, end);
     }
-    /*
-    if (end < start) {  // If we need to loop around
-        for (int i = start; i < num_waypoints; i++) {
-            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-            ld_diff = lookahead - dist;
-             // Find the waypoint that is closest to lookahead distance
-            if (ld_diff >=0 && ld_diff <= min_ld_diff){
-                min_ld_diff = ld_diff;
-                // 먼저 장애물이 있는지 확인하고, 없으면 바로 farthest_waypoint_index 설정
-                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
-                    farthest_waypoint_index = i;  // 첫 번째 검사에서 장애물이 없을 경우
-                } else {
-                    // 장애물이 있을 경우, 안전한 웨이포인트를 찾기 위한 반복문
-                    
-                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    while (check_obstacle(waypoints.X[farthest_waypoint_index], waypoints.Y[farthest_waypoint_index], x_car_world, y_car_world)) {
-                        farthest_waypoint_index = (farthest_waypoint_index > 0) ? farthest_waypoint_index - 1 : num_waypoints - 1;
 
-                        // 무한 루프 방지: 웨이포인트 리스트를 다 돌아도 장애물이 있을 경우 경고
-                        if (farthest_waypoint_index == waypoints.index) {
-                            RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
-                            break;
-                        }
-                    }
-                }
-
-            }
-            
-        }
-    }
-        for (int i = 0; i < end; i++) {
-            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-            ld_diff = lookahead - dist;
-            
-            if(ld_diff>=0 && ld_diff <= min_ld_diff){
-                min_ld_diff = ld_diff;
-                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
-                        farthest_waypoint_index = i;  // 첫 번째 검사에서 장애물이 없을 경우
-                } else {
-                    // 장애물이 있을 경우, 안전한 웨이포인트를 찾기 위한 반복문
-                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    while (check_obstacle(waypoints.X[farthest_waypoint_index], waypoints.Y[farthest_waypoint_index])) {
-                        farthest_waypoint_index = (farthest_waypoint_index > 0) ? farthest_waypoint_index - 1 : num_waypoints - 1;
-
-                        // 무한 루프 방지: 웨이포인트 리스트를 다 돌아도 장애물이 있을 경우 경고
-                        if (farthest_waypoint_index == waypoints.index) {
-                            RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
-                            break;
-                        }
-                    }
-                }
-
-            }
-            
-            }
-        
-    else {
-        for (int i = start; i < end; i++) {
-            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-            ld_diff = lookahead - dist;
-            
-            if(ld_diff>=0 && ld_diff <= min_ld_diff){
-                min_ld_diff = ld_diff;
-                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
-                    farthest_waypoint_index = i;  
-                } else {
-                    
-                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    while (check_obstacle(waypoints.X[farthest_waypoint_index], waypoints.Y[farthest_waypoint_index])) {
-                        farthest_waypoint_index = (farthest_waypoint_index > 0) ? farthest_waypoint_index - 1 : num_waypoints - 1;
-
-                        
-                        if (farthest_waypoint_index == waypoints.index) {
-                            RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
-                            break;
-                        }
-                    }
-                }
-
-            }
-        }
-    }
-*/
     if (farthest_waypoint_index == -1) {
         for (int i = 0; i < num_waypoints; i++) {
-            dist = p2pdist(waypoints.X[i], current_x, waypoints.Y[i], current_y);
+            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
             ld_diff = lookahead - dist;
-        
+
             if (ld_diff >= 0 && ld_diff < min_ld_diff) {
                 min_ld_diff = ld_diff;
                 farthest_waypoint_index = i;
             }
         }
     }
-    
-    
 
-    // 최종적으로 장애물이 없는 웨이포인트를 결정
     waypoints.index = farthest_waypoint_index;
     RCLCPP_INFO(this->get_logger(), "Safe waypoint found: %d", waypoints.index);
-   
-    
-
-
 }
 
+void PurePursuit::quat_to_rot(double q0, double q1, double q2, double q3) {
+    double r00 = 2.0 * (q0 * q0 + q1 * q1) - 1.0;
+    double r01 = 2.0 * (q1 * q2 - q0 * q3);
+    double r02 = 2.0 * (q1 * q3 + q0 * q2);
 
-void PurePursuit::get_waypoint() {
-    /*start와 end의 정의:
+    double r10 = 2.0 * (q1 * q2 + q0 * q3);
+    double r11 = 2.0 * (q0 * q0 + q2 * q2) - 1.0;
+    double r12 = 2.0 * (q2 * q3 - q0 * q1);
 
-    start: 현재 경로 탐색이 시작되는 인덱스 (waypoints.index).
-    end: start부터 500개의 포인트를 탐색할 때 그 끝 인덱스 ((waypoints.index + 500) % num_waypoints).
-    여기서 num_waypoints는 전체 경로 포인트의 개수입니다. % num_waypoints를 사용
-해 인덱스가 num_waypoints를 초과하지 않도록 순환 구조를 유지하고 있습니다.
+    double r20 = 2.0 * (q1 * q3 - q0 * q2);
+    double r21 = 2.0 * (q2 * q3 + q0 * q1);
+    double r22 = 2.0 * (q0 * q0 + q3 * q3) - 1.0;
 
-    if end < start가 참인 경우 (배열의 끝을 넘는 경우):
-
-    이 조건은 end가 start보다 작을 때, 즉 경로가 배열의 끝을 넘어서 다시 배열의 처음으로 돌아가는 상황을 나타냅니다. 순환 배열에서는 이런 상황이 발생할 수 있으>며, 이때 경로를 두 번에 나누어 탐색해야 합니다.
-    start부터 배열의 끝까지 (start에서 num_waypoints - 1까지)를 탐색.
-    배열의 처음부터 end까지 (0에서 end - 1까지)를 탐색.
-
-    if end >= start인 경우 (배열의 끝을 넘지 않는 경우):
-
-    경로가 배열의 끝을 넘지 않으면, 단순히 start부터 end까지 한 번에 탐색하면 됩
-니다.
-    요약:
-    end < start: 경로 탐색 범위가 배열의 끝을 넘어가서 다시 처음부터 탐색해야 하
-는 경우.
-    end >= start: 경로 탐색 범위가 배열의 중간에서 끝나는 경우로, 순차적으로 탐>색할 수 있습니다.
-    */
-
-
-    // Main logic: Search within the next 500 points
-    double longest_distance = 0;
-    int final_i = -1;
-    int start = waypoints.index; 
-    int end = (waypoints.index + waypoint_search_range) % num_waypoints; //default waypoint_search_range = 500
-
-//num_waypoints = 312
-//start < end
-//start       end    
-//0           500 % 312 = 188
-//1           501 % 312 = 189
-//2           502 % 312 = 190
-//123         623 % 312 = 311
-
-
-//----------------------------
-//end < start // If we need to loop around
-//start       end  
-//124         624 % 312 = 0
-//300         800 % 312 = 176
-//311         811 % 312 = 187
-
-
-
-
-
-    // Lookahead needs to be between the min_lookhead and the max_lookahead
-    double lookahead = std::min(std::max(min_lookahead, max_lookahead * curr_velocity / lookahead_ratio), max_lookahead);
-
-    if (end < start) {  // If we need to loop around
-        for (int i = start; i < num_waypoints; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                final_i = i;
-            }
-        }
-        for (int i = 0; i < end; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                final_i = i;
-            }
-        }
-    } else {
-        for (int i = start; i < end; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                final_i = i;
-            }
-        }
-    }
-
-    if (final_i == -1) {  // if we haven't found anything, search from the beginning
-        final_i = 0;
-        for (int i = 0; i < num_waypoints; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                final_i = i;
-            }
-        }
-    }
-
-    // Find the closest point to the car, and use the velocity index for that
-    double shortest_distance = p2pdist(waypoints.X[0], x_car_world, waypoints.Y[0], y_car_world);
-    int velocity_i = 0;
-    for (int i = 0; i < num_waypoints; i++) {
-        if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= shortest_distance) {
-            shortest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-            velocity_i = i;
-        }
-    }
-
-    // If a waypoint is not found within our radius, then waypoints.index = 0
-    waypoints.index = final_i;
-    waypoints.velocity_index = velocity_i;
+    rotation_m << r00, r01, r02,
+                  r10, r11, r12,
+                  r20, r21, r22;
 }
 
-void PurePursuit::quat_to_rot(double q0, double q1, double q2, double q3) { //쿼터니언을 회전 행렬로 변환
-    double r00 = (double)(2.0 * (q0 * q0 + q1 * q1) - 1.0);  
-    double r01 = (double)(2.0 * (q1 * q2 - q0 * q3));
-    double r02 = (double)(2.0 * (q1 * q3 + q0 * q2));
-
-    double r10 = (double)(2.0 * (q1 * q2 + q0 * q3));
-    double r11 = (double)(2.0 * (q0 * q0 + q2 * q2) - 1.0);
-    double r12 = (double)(2.0 * (q2 * q3 - q0 * q1));
-
-    double r20 = (double)(2.0 * (q1 * q3 - q0 * q2));
-    double r21 = (double)(2.0 * (q2 * q3 + q0 * q1));
-    double r22 = (double)(2.0 * (q0 * q0 + q3 * q3) - 1.0);
-
-    rotation_m << r00, r01, r02, r10, r11, r12, r20, r21, r22;
-}
-
-void PurePursuit::transformandinterp_waypoint() {  // pass old waypoint here
-    // initialise vectors
+void PurePursuit::transformandinterp_waypoint() {
+    // 벡터 초기화
     waypoints.lookahead_point_world << waypoints.X[waypoints.index], waypoints.Y[waypoints.index], 0.0;
-    waypoints.current_point_world << waypoints.X[waypoints.velocity_index], waypoints.Y[waypoints.velocity_index], 0.0;
 
-    visualize_lookahead_point(waypoints.lookahead_point_world);
-    visualize_current_point(waypoints.current_point_world);
-
-    // look up transformation at that instant from tf_buffer_
+    // 변환 얻기
     geometry_msgs::msg::TransformStamped transformStamped;
 
     try {
-        // Get the transform from the base_link reference to world reference frame
         transformStamped = tf_buffer_->lookupTransform(car_refFrame, global_refFrame, tf2::TimePointZero);
     } catch (tf2::TransformException &ex) {
-        RCLCPP_INFO(this->get_logger(), "Could not transform. Error: %s", ex.what());
+        RCLCPP_ERROR(this->get_logger(), "Could not transform. Error: %s", ex.what());
+        return; // 함수 실행 중단
     }
 
-    // transform points (rotate first and then translate)
+    // 포인트 변환
     Eigen::Vector3d translation_v(transformStamped.transform.translation.x, transformStamped.transform.translation.y, transformStamped.transform.translation.z);
     quat_to_rot(transformStamped.transform.rotation.w, transformStamped.transform.rotation.x, transformStamped.transform.rotation.y, transformStamped.transform.rotation.z);
 
     waypoints.lookahead_point_car = (rotation_m * waypoints.lookahead_point_world) + translation_v;
 }
 
-double PurePursuit::p_controller() { //차량이 목표 지점을 향해 회전하는 데 필요한 조향 각도를 계산
-    double r = waypoints.lookahead_point_car.norm();  // r = sqrt(x^2 + y^2)
+double PurePursuit::p_controller() {
+    double x = waypoints.lookahead_point_car(0);
     double y = waypoints.lookahead_point_car(1);
-    double angle = K_p * 2 * y / pow(r, 2);  // Calculated from https://docs.google.com/presentation/d/1jpnlQ7ysygTPCi8dmyZjooqzxNXWqMgO31ZhcOlKVOE/edit#slide=id.g63d5f5680f_0_33
+
+    // K_p를 포함하여 조향각 계산
+    double angle = K_p * atan2(2 * wheelbase * y, x * x + y * y);
 
     return angle;
 }
 
-double PurePursuit::get_velocity(double steering_angle) {
-    double velocity = 0;
-
-    if (waypoints.V[waypoints.velocity_index]) {
-        velocity = waypoints.V[waypoints.velocity_index] * velocity_percentage;
-    } else {  // For waypoints loaded without velocity profiles
-        if (abs(steering_angle) >= to_radians(0.0) && abs(steering_angle) < to_radians(10.0)) {
-            velocity = 6.0 * velocity_percentage;
-        } else if (abs(steering_angle) >= to_radians(10.0) && abs(steering_angle) <= to_radians(20.0)) {
-            velocity = 2.5 * velocity_percentage;
-        } else {
-            velocity = 2.0 * velocity_percentage;
-        }
-    }
-
-    return velocity;
-}
-
 void PurePursuit::publish_message(double steering_angle) {
     auto drive_msgObj = ackermann_msgs::msg::AckermannDriveStamped();
+
     if (steering_angle < 0.0) {
-        drive_msgObj.drive.steering_angle = std::max(steering_angle, -to_radians(steering_limit));  // ensure steering angle is dynamically capable
+        drive_msgObj.drive.steering_angle = std::max(steering_angle, -to_radians(steering_limit));
     } else {
-        drive_msgObj.drive.steering_angle = std::min(steering_angle, to_radians(steering_limit));  // ensure steering angle is dynamically capable
+        drive_msgObj.drive.steering_angle = std::min(steering_angle, to_radians(steering_limit));
     }
 
-    curr_velocity = get_velocity(drive_msgObj.drive.steering_angle);
     drive_msgObj.drive.speed = curr_velocity;
 
-    RCLCPP_INFO(this->get_logger(), "index: %d ... distance: %.2fm ... Speed: %.2fm/s ... Steering Angle: %.2f ... K_p: %.2f ... velocity_percentage: %.2f", waypoints.index, p2pdist(waypoints.X[waypoints.index], x_car_world, waypoints.Y[waypoints.index], y_car_world), drive_msgObj.drive.speed, to_degrees(drive_msgObj.drive.steering_angle), K_p, velocity_percentage);
+    RCLCPP_INFO(this->get_logger(), "Index: %d ... Distance: %.2f m ... Speed: %.2f m/s ... Steering Angle: %.2f degrees",
+                waypoints.index,
+                p2pdist(waypoints.X[waypoints.index], x_car_world, waypoints.Y[waypoints.index], y_car_world),
+                drive_msgObj.drive.speed,
+                to_degrees(drive_msgObj.drive.steering_angle));
 
     publisher_drive->publish(drive_msgObj);
 }
@@ -536,32 +373,37 @@ void PurePursuit::publish_message(double steering_angle) {
 void PurePursuit::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr odom_submsgObj) {
     x_car_world = odom_submsgObj->pose.pose.position.x;
     y_car_world = odom_submsgObj->pose.pose.position.y;
-    // interpolate between different way-points
+
+    // 웨이포인트 업데이트
     get_waypoint();
 
-    // use tf2 transform the goal point
+    // 웨이포인트 변환 및 보간
     transformandinterp_waypoint();
 
-    // Calculate curvature/steering angle
+    // 조향각 계산
     double steering_angle = p_controller();
 
-    // publish object and message: AckermannDriveStamped on drive topic
+    // 속도 설정 (조향각을 인자로 전달)
+    set_velocity(steering_angle);
+
+    // 메시지 퍼블리시
     publish_message(steering_angle);
 }
 
 void PurePursuit::timer_callback() {
-    // Periodically check parameters and update
-    K_p = this->get_parameter("K_p").as_double();
+    // 주기적으로 파라미터 업데이트
+    K_p = this->get_parameter("K_p").as_double(); // K_p 파라미터 업데이트
     velocity_percentage = this->get_parameter("velocity_percentage").as_double();
     min_lookahead = this->get_parameter("min_lookahead").as_double();
     max_lookahead = this->get_parameter("max_lookahead").as_double();
     lookahead_ratio = this->get_parameter("lookahead_ratio").as_double();
     steering_limit = this->get_parameter("steering_limit").as_double();
+    wheelbase = this->get_parameter("wheelbase").as_double(); // wheelbase 파라미터 업데이트
 }
 
 int main(int argc, char **argv) {
     rclcpp::init(argc, argv);
-    auto node_ptr = std::make_shared<PurePursuit>();  // initialise node pointer
+    auto node_ptr = std::make_shared<PurePursuit>();
     rclcpp::spin(node_ptr);
     rclcpp::shutdown();
     return 0;
