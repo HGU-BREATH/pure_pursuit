@@ -191,11 +191,9 @@ void PurePursuit::new_get_waypoint(){
     //현재 위치와 가장 가까운 인덱스 계산
     //이때 MAX_LOOKAHEDAD 보다 작은 인덱스를 불러와야함
      // Get the current vehicle position
-    double current_x = x_car_world;
-    double current_y = y_car_world;
+
     double longest_distance = 0;
-    // Adjust lookahead distance based on speed
-    double lookahead_distance = std::min(std::max(min_lookahead, max_lookahead * curr_velocity / lookahead_ratio), max_lookahead);
+
     
     int farthest_waypoint_index = -1;
     int start = waypoints.index;
@@ -203,63 +201,148 @@ void PurePursuit::new_get_waypoint(){
 
 // Lookahead needs to be between the min_lookhead and the max_lookahead
     double lookahead = std::min(std::max(min_lookahead, max_lookahead * curr_velocity / lookahead_ratio), max_lookahead);
+    double dist=-1;
+    double ld_diff;
+    double min_ld_diff = std::numeric_limits<double>::max();  // Initialize to a large value for comparison
+    // Function to find a safe waypoint by moving backwards
+    auto find_safe_waypoint = [&](int &index) {
+        while (check_obstacle(waypoints.X[index], waypoints.Y[index])) {
+            index = (index > 0) ? index - 1 : num_waypoints - 1;  // Move to the previous waypoint
 
+            // Prevent infinite loop
+            if (index == waypoints.index) {
+                RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
+                break;
+            }
+        }
+    };
+    // Loop through waypoints and process
+    auto process_waypoints = [&](int start_idx, int end_idx) {
+        for (int i = start_idx; i < end_idx; i++) {
+            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
+            ld_diff = lookahead - dist;
+
+            if (ld_diff >= 0 && ld_diff <= min_ld_diff) {
+                min_ld_diff = ld_diff;
+
+                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
+                    farthest_waypoint_index = i;  // No obstacle, set as the farthest waypoint
+                } else {
+                    // Obstacle found, move to the previous waypoint
+                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
+                    find_safe_waypoint(farthest_waypoint_index);  // Find a safe waypoint
+                }
+            }
+        }
+    };
+     // Handle wrapping around waypoints
+    if (end < start) {
+        process_waypoints(start, num_waypoints);  // Process from start to end of the list
+        process_waypoints(0, end);  // Process from beginning to end
+    } else {
+        process_waypoints(start, end);  // Single range
+    }
+    /*
     if (end < start) {  // If we need to loop around
         for (int i = start; i < num_waypoints; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                farthest_waypoint_index = i;
+            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
+            ld_diff = lookahead - dist;
+             // Find the waypoint that is closest to lookahead distance
+            if (ld_diff >=0 && ld_diff <= min_ld_diff){
+                min_ld_diff = ld_diff;
+                // 먼저 장애물이 있는지 확인하고, 없으면 바로 farthest_waypoint_index 설정
+                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
+                    farthest_waypoint_index = i;  // 첫 번째 검사에서 장애물이 없을 경우
+                } else {
+                    // 장애물이 있을 경우, 안전한 웨이포인트를 찾기 위한 반복문
+                    
+                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
+                    while (check_obstacle(waypoints.X[farthest_waypoint_index], waypoints.Y[farthest_waypoint_index], x_car_world, y_car_world)) {
+                        farthest_waypoint_index = (farthest_waypoint_index > 0) ? farthest_waypoint_index - 1 : num_waypoints - 1;
+
+                        // 무한 루프 방지: 웨이포인트 리스트를 다 돌아도 장애물이 있을 경우 경고
+                        if (farthest_waypoint_index == waypoints.index) {
+                            RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
+                            break;
+                        }
+                    }
+                }
+
             }
+            
         }
+    }
         for (int i = 0; i < end; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                farthest_waypoint_index = i;
+            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
+            ld_diff = lookahead - dist;
+            
+            if(ld_diff>=0 && ld_diff <= min_ld_diff){
+                min_ld_diff = ld_diff;
+                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
+                        farthest_waypoint_index = i;  // 첫 번째 검사에서 장애물이 없을 경우
+                } else {
+                    // 장애물이 있을 경우, 안전한 웨이포인트를 찾기 위한 반복문
+                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
+                    while (check_obstacle(waypoints.X[farthest_waypoint_index], waypoints.Y[farthest_waypoint_index])) {
+                        farthest_waypoint_index = (farthest_waypoint_index > 0) ? farthest_waypoint_index - 1 : num_waypoints - 1;
+
+                        // 무한 루프 방지: 웨이포인트 리스트를 다 돌아도 장애물이 있을 경우 경고
+                        if (farthest_waypoint_index == waypoints.index) {
+                            RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
+                            break;
+                        }
+                    }
+                }
+
             }
-        }
-    } else {
+            
+            }
+        
+    else {
         for (int i = start; i < end; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
-                farthest_waypoint_index = i;
+            dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
+            ld_diff = lookahead - dist;
+            
+            if(ld_diff>=0 && ld_diff <= min_ld_diff){
+                min_ld_diff = ld_diff;
+                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
+                    farthest_waypoint_index = i;  
+                } else {
+                    
+                    farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
+                    while (check_obstacle(waypoints.X[farthest_waypoint_index], waypoints.Y[farthest_waypoint_index])) {
+                        farthest_waypoint_index = (farthest_waypoint_index > 0) ? farthest_waypoint_index - 1 : num_waypoints - 1;
+
+                        
+                        if (farthest_waypoint_index == waypoints.index) {
+                            RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
+                            break;
+                        }
+                    }
+                }
+
             }
         }
     }
-
-    if (farthest_waypoint_index == -1) {  // if we haven't found anything, search from the beginning
-        farthest_waypoint_index = 0;
+*/
+    if (farthest_waypoint_index == -1) {
         for (int i = 0; i < num_waypoints; i++) {
-            if (p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) <= lookahead && p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world) >= longest_distance) {
-                longest_distance = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
+            dist = p2pdist(waypoints.X[i], current_x, waypoints.Y[i], current_y);
+            ld_diff = lookahead - dist;
+        
+            if (ld_diff >= 0 && ld_diff < min_ld_diff) {
+                min_ld_diff = ld_diff;
                 farthest_waypoint_index = i;
             }
         }
     }
     
-    waypoints.index = farthest_waypoint_index;
-    RCLCPP_INFO(this->get_logger(), "New farthest waypoint: %d with distance difference: %f", farthest_waypoint_index, longest_distance);
     
-    int waypoint_index = waypoints.index;
-    // 장애물 판단 함수가 장애물이 없다고 할 때까지 반복
-    while (check_obstacle(waypoints.X[waypoint_index], waypoints.Y[waypoint_index])) {
-        // 장애물이 있을 경우, 이전 웨이포인트로 이동
-        if (waypoint_index > 0) {
-            waypoint_index--;  // 인덱스를 이전 웨이포인트로 이동
-        } else {
-            // 인덱스가 0인 경우, 리스트의 끝으로 이동 (순환형 리스트 처리)
-            waypoint_index = num_waypoints - 1;
-        }
-
-        // 만약 모든 웨이포인트가 장애물로 막혀있다면 루프 탈출
-        if (waypoint_index == farthest_waypoint_index) {
-            RCLCPP_WARN(this->get_logger(), "No valid waypoint found. All waypoints blocked by obstacles.");
-            return;
-        }
-    }
 
     // 최종적으로 장애물이 없는 웨이포인트를 결정
-    RCLCPP_INFO(this->get_logger(), "Safe waypoint found: %d", waypoint_index);
-    waypoints.index = waypoint_index;
+    waypoints.index = farthest_waypoint_index;
+    RCLCPP_INFO(this->get_logger(), "Safe waypoint found: %d", waypoints.index);
+   
     
 
 
