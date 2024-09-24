@@ -15,7 +15,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
-
+#include "sensor_msgs/msg/laser_scan.hpp"
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
@@ -67,6 +67,9 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     subscription_odom = this->create_subscription<nav_msgs::msg::Odometry>(
         odom_topic, 25, std::bind(&PurePursuit::odom_callback, this, _1));
     timer_ = this->create_wall_timer(2000ms, std::bind(&PurePursuit::timer_callback, this));
+
+    subscription_scan = this->create_subscription<sensor_msgs::msg::LaserScan>(
+    "/scan", 10, std::bind(&PurePursuit::scan_callback, this, std::placeholders::_1));
 
     publisher_drive = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic, 25);
     vis_current_point_pub = this->create_publisher<visualization_msgs::msg::Marker>(rviz_current_waypoint_topic, 10);
@@ -172,8 +175,47 @@ void PurePursuit::visualize_current_point(Eigen::Vector3d &point) {
 }
 
 bool PurePursuit::check_obstacle(double x, double y) {
-    // 장애물 체크 로직 구현 필요
-    // 현재는 장애물이 없다고 가정
+    /// 차량의 orientation (쿼터니언에서 yaw 값 추출)
+    double q_x = last_odom_msg->pose.pose.orientation.x;
+    double q_y = last_odom_msg->pose.pose.orientation.y;
+    double q_z = last_odom_msg->pose.pose.orientation.z;
+    double q_w = last_odom_msg->pose.pose.orientation.w;
+
+    // 쿼터니언을 RPY(roll, pitch, yaw)로 변환
+    tf2::Quaternion q(q_x, q_y, q_z, q_w);
+    tf2::Matrix3x3 m(q);
+    double roll, pitch, yaw;
+    m.getRPY(roll, pitch, yaw);
+
+    // 목표 좌표와 차량 좌표 간 벡터 계산
+    double dx = x - x_car_world;
+    double dy = y - y_car_world;
+
+    // 목표 지점까지의 각도 (atan2로 구함, 라디안 단위)
+    double target_theta = atan2(dy, dx);
+
+    // 차량 정면(yaw)을 기준으로 상대적인 각도 계산
+    double relative_theta = target_theta - yaw;
+
+    // 각도 차이를 [-π, π] 범위로 조정
+    if (relative_theta > M_PI) {
+        relative_theta -= 2 * M_PI;
+    } else if (relative_theta < -M_PI) {
+        relative_theta += 2 * M_PI;
+    }
+
+    // 라디안 값을 도(degrees)로 변환
+    double relative_angle_degrees = relative_theta * 180.0 / M_PI;
+
+    // 상대 각도를 라이다 스캔 데이터의 인덱스로 변환
+    double lidar_index = (relative_angle_degrees + 135.0) / 270.0 * 1081.0;
+
+    RCLCPP_INFO(this->get_logger(), "차량의 위치는 %f, %f, 목표 위치는 %d 위치에 있습니다. 거리는 %f 입니다.", x_car_world, y_car_world, static_cast<int>(lidar_index), last_scan_msg->ranges[lidar_index]);
+    
+    if(abs(p2pdist(x, x_car_world, y, y_car_world)-last_scan_msg->ranges[lidar_index])>1) {
+        RCLCPP_INFO(this->get_logger(), "라이다데이터는 %f이므로 장애물이 있음", last_scan_msg->ranges[lidar_index]);
+        return true;
+    }
     return false;
 }
 
@@ -385,9 +427,17 @@ void PurePursuit::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr od
 
     // 속도 설정 (조향각을 인자로 전달)
     set_velocity(steering_angle);
-
+    last_odom_msg = odom_submsgObj;
     // 메시지 퍼블리시
     publish_message(steering_angle);
+}
+
+void PurePursuit::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr scan_msg) {
+    // LaserScan
+    RCLCPP_INFO(this->get_logger(), "스캔 메시지를 받았습니다. %zu개의 범위 값이 있습니다.", scan_msg->ranges.size());
+    last_scan_msg = scan_msg;
+    // scan_msg->ranges[0]
+    checkBlock(1.0, 1.0);
 }
 
 void PurePursuit::timer_callback() {
