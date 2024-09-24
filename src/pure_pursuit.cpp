@@ -302,7 +302,7 @@ void PurePursuit::get_waypoint() {
                     farthest_waypoint_index = i;
                 } else {
                     farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    //find_safe_waypoint(farthest_waypoint_index);
+                    
                     break;
                 }
             }
