@@ -287,18 +287,7 @@ void PurePursuit::get_waypoint() {
     double ld_diff;
     double min_ld_diff = std::numeric_limits<double>::max();
 
-    // 장애물이 없는 웨이포인트를 찾는 함수
-    auto find_safe_waypoint = [&](int &index) {
-        while (check_obstacle(waypoints.X[index], waypoints.Y[index])) {
-            index = (index > 0) ? index - 1 : num_waypoints - 1;
-
-            // 무한 루프 방지
-            if (index == waypoints.index) {
-                RCLCPP_WARN(this->get_logger(), "All waypoints blocked by obstacles. No safe waypoint found.");
-                break;
-            }
-        }
-    };
+    
 
     // 웨이포인트를 처리하는 함수
     auto process_waypoints = [&](int start_idx, int end_idx) {
@@ -313,8 +302,12 @@ void PurePursuit::get_waypoint() {
                     farthest_waypoint_index = i;
                 } else {
                     farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    find_safe_waypoint(farthest_waypoint_index);
+                    //find_safe_waypoint(farthest_waypoint_index);
+                    break;
                 }
+            }
+            else{
+                break;
             }
         }
     };

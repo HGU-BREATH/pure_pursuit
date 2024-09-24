@@ -123,6 +123,4 @@ class PurePursuit : public rclcpp::Node {
     void check_block(); //세찬
 
     void set_velocity(); //원빈
-    void new_get_waypoint(); //선환
-
 };
