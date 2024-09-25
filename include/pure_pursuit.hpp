@@ -132,9 +132,7 @@ private:
 
     void set_velocity(double steering_angle);
 
-    bool check_obstacle(double x, double y);
-
-    void checkBlock(double x, double y);  // 추가된 함수 선언
+    bool check_obstacle(double x, double y);// 추가된 함수 선언
 };
 
 #endif  // PURE_PURSUIT_HPP
