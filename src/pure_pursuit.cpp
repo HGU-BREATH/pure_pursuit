@@ -429,7 +429,7 @@ void PurePursuit::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr sca
     RCLCPP_INFO(this->get_logger(), "스캔 메시지를 받았습니다. %zu개의 범위 값이 있습니다.", scan_msg->ranges.size());
     last_scan_msg = scan_msg;
     // scan_msg->ranges[0]
-    checkBlock(1.0, 1.0);
+    check_obstacle(1.0, 1.0);
 }
 
 void PurePursuit::timer_callback() {
