@@ -25,7 +25,7 @@
 
 PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     // 파라미터 선언
-    this->declare_parameter("waypoints_path", "/sim_ws/src/pure_pursuit/racelines/e7_floor5.csv");
+    this->declare_parameter("waypoints_path", "/home/onebean/sim_ws/src/racelines/IV2024WithoutV.csv");
     this->declare_parameter("odom_topic", "/ego_racecar/odom");
     this->declare_parameter("car_refFrame", "ego_racecar/base_link");
     this->declare_parameter("drive_topic", "/drive");
@@ -33,9 +33,11 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     this->declare_parameter("rviz_lookahead_waypoint_topic", "/lookahead_waypoint");
     this->declare_parameter("global_refFrame", "map");
     this->declare_parameter("min_lookahead", 0.5);
-    this->declare_parameter("max_lookahead", 1.0);
+    this->declare_parameter("max_lookahead", 3.0);
     this->declare_parameter("lookahead_ratio", 8.0);
-    this->declare_parameter("K_p", 1.0); // K_p 파라미터 선언 및 초기값 설정
+    this->declare_parameter("min_velocity", 2.0);
+    this->declare_parameter("max_velocity", 3.0);
+    this->declare_parameter("K_p", 2.0); // K_p 파라미터 선언 및 초기값 설정
     this->declare_parameter("steering_limit", 25.0);
     this->declare_parameter("velocity_percentage", 0.6);
     this->declare_parameter("waypoint_search_range", 500);
@@ -52,6 +54,8 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     min_lookahead = this->get_parameter("min_lookahead").as_double();
     max_lookahead = this->get_parameter("max_lookahead").as_double();
     lookahead_ratio = this->get_parameter("lookahead_ratio").as_double();
+    min_velocity = this->get_parameter("min_velocity").as_double();
+    max_velocity = this->get_parameter("max_velocity").as_double();
     K_p = this->get_parameter("K_p").as_double(); // K_p 파라미터 초기화
     steering_limit = this->get_parameter("steering_limit").as_double();
     velocity_percentage = this->get_parameter("velocity_percentage").as_double();
@@ -62,7 +66,8 @@ PurePursuit::PurePursuit() : Node("pure_pursuit_node") {
     waypoints.index = 0;
 
     // 변수 초기화
-    curr_velocity = 0.0;
+    curr_velocity = min_velocity;
+    previous_lookahead = min_lookahead;
 
     subscription_odom = this->create_subscription<nav_msgs::msg::Odometry>(
         odom_topic, 25, std::bind(&PurePursuit::odom_callback, this, _1));
@@ -116,7 +121,13 @@ void PurePursuit::load_waypoints() {
         while (getline(s, word, ',')) {
             if (!word.empty()) {
                 if (j == 0) {
-                    waypoints.X.push_back(std::stod(word));
+                    try {
+                        waypoints.X.push_back(std::stod(word));
+                    }
+                    catch (const std::invalid_argument &e){
+                        RCLCPP_ERROR(this->get_logger(), "Invalid data in CSV file at line %s", line.c_str());
+                        continue;
+                    }
                 } else if (j == 1) {
                     waypoints.Y.push_back(std::stod(word));
                 }
@@ -174,7 +185,18 @@ void PurePursuit::visualize_current_point(Eigen::Vector3d &point) {
     vis_current_point_pub->publish(marker);
 }
 
-bool PurePursuit::check_obstacle(double x, double y) {
+bool PurePursuit::checkBlock(double x, double y) {
+
+    // For preventing segmentation fault
+    if (last_scan_msg == nullptr) {
+        RCLCPP_WARN(this->get_logger(), "Scan message is not yet available");
+        return false;
+    }
+    else if (last_odom_msg == nullptr) {
+        RCLCPP_WARN(this->get_logger(), "Odom message is not yet available");
+        return false;
+    }     
+
     /// 차량의 orientation (쿼터니언에서 yaw 값 추출)
     double q_x = last_odom_msg->pose.pose.orientation.x;
     double q_y = last_odom_msg->pose.pose.orientation.y;
@@ -208,11 +230,13 @@ bool PurePursuit::check_obstacle(double x, double y) {
     double relative_angle_degrees = relative_theta * 180.0 / M_PI;
 
     // 상대 각도를 라이다 스캔 데이터의 인덱스로 변환
-    double lidar_index = (relative_angle_degrees + 135.0) / 270.0 * 1081.0;
+    double lidar_index = std::max(std::min(static_cast<int>((relative_angle_degrees + 135.0) / 270.0 * 1080.0),180),0);
 
     RCLCPP_INFO(this->get_logger(), "차량의 위치는 %f, %f, 목표 위치는 %d 위치에 있습니다. 거리는 %f 입니다.", x_car_world, y_car_world, static_cast<int>(lidar_index), last_scan_msg->ranges[lidar_index]);
     
-    if(abs(p2pdist(x, x_car_world, y, y_car_world)-last_scan_msg->ranges[lidar_index])>1) {
+    double obsThreshold = 1.0;
+
+    if(abs(p2pdist(x, x_car_world, y, y_car_world)-last_scan_msg->ranges[lidar_index]) > obsThreshold) {
         RCLCPP_INFO(this->get_logger(), "라이다데이터는 %f이므로 장애물이 있음", last_scan_msg->ranges[lidar_index]);
         return true;
     }
@@ -220,9 +244,6 @@ bool PurePursuit::check_obstacle(double x, double y) {
 }
 
 void PurePursuit::set_velocity(double steering_angle) {
-    // 최소 및 최대 속도 (m/s)
-    double minVelocity = 2.0;
-    double maxVelocity = 6.0;
 
     // 최대 조향각 (라디안 단위)
     double maxSteeringAngle = to_radians(steering_limit);
@@ -236,12 +257,12 @@ void PurePursuit::set_velocity(double steering_angle) {
 
     // realDistance를 mld로 제한하여 0에서 1 사이로 정규화
     double mld = max_lookahead;
-    double effectiveDistance = std::min(std::max(realDistance, 0.0), mld);
+    double effectiveDistance = std::min(std::max(realDistance, min_lookahead), mld);
     double normalizedDistance = effectiveDistance / mld;
 
     // 거리 기반 속도 계산 (비선형 함수 적용)
     double gamma = 0.5;
-    double distanceVelocity = minVelocity + (maxVelocity - minVelocity) *
+    double distanceVelocity = min_velocity + (max_velocity - min_velocity) *
                               pow(normalizedDistance, gamma);
 
     // 현재 조향각의 절대값 (라디안 단위)
@@ -257,7 +278,7 @@ void PurePursuit::set_velocity(double steering_angle) {
     double finalVelocity = distanceVelocity * reductionFactor;
 
     // 속도를 최소 및 최대 속도로 제한
-    finalVelocity = std::max(std::min(finalVelocity, maxVelocity), minVelocity);
+    finalVelocity = std::max(std::min(finalVelocity, max_velocity), min_velocity);
 
     // 계산된 속도를 curr_velocity에 저장
     curr_velocity = finalVelocity;
@@ -267,27 +288,34 @@ void PurePursuit::set_velocity(double steering_angle) {
         distanceVelocity, reductionFactor, curr_velocity);
 }
 
-void PurePursuit::get_waypoint() {
+void PurePursuit::get_waypoint(double steering_angle) {
     // 장애물을 고려한 웨이포인트 선택 로직
 
     // 현재 차량 위치
     double x_car_world = this->x_car_world;
     double y_car_world = this->y_car_world;
 
-    double longest_distance = 0;
     int farthest_waypoint_index = -1;
     int start = waypoints.index;
     int end = (waypoints.index + waypoint_search_range) % num_waypoints;
 
-    // 전방주시 거리를 계산
-    double lookahead = std::min(std::max(min_lookahead, max_lookahead * curr_velocity / lookahead_ratio), max_lookahead);
+    double absSteeringAngle = std::abs(steering_angle);
+    double maxSteeringAngle = to_radians(steering_limit);
+
+    double lookahead = max_lookahead - (max_lookahead - min_lookahead) * (absSteeringAngle / maxSteeringAngle);
+    lookahead = std::min(std::max(lookahead, min_lookahead), max_lookahead);
+
+    // 가중 평균을 사용하여 이전 lookahead와 새 lookahead의 가중치 계산
+    double alpha = 0.9;  // 새 값에 대한 가중치 (0에 가까울수록 이전 값 반영이 커짐)
+    lookahead = alpha * lookahead + (1 - alpha) * previous_lookahead;
+
+    // previous_lookahead 값을 업데이트
+    previous_lookahead = lookahead;
 
     // 거리 차이 및 최소값 초기화
     double dist = -1;
     double ld_diff;
     double min_ld_diff = std::numeric_limits<double>::max();
-
-    
 
     // 웨이포인트를 처리하는 함수
     auto process_waypoints = [&](int start_idx, int end_idx) {
@@ -298,11 +326,10 @@ void PurePursuit::get_waypoint() {
             if (ld_diff >= 0 && ld_diff <= min_ld_diff) {
                 min_ld_diff = ld_diff;
 
-                if (!check_obstacle(waypoints.X[i], waypoints.Y[i])) {
+                if (!checkBlock(waypoints.X[i], waypoints.Y[i])) {
                     farthest_waypoint_index = i;
                 } else {
                     farthest_waypoint_index = (i > 0) ? i - 1 : num_waypoints - 1;
-                    
                     break;
                 }
             }
@@ -320,6 +347,7 @@ void PurePursuit::get_waypoint() {
         process_waypoints(start, end);
     }
 
+    // !!! I think we should define our response when there is no proper waypoint to go
     if (farthest_waypoint_index == -1) {
         for (int i = 0; i < num_waypoints; i++) {
             dist = p2pdist(waypoints.X[i], x_car_world, waypoints.Y[i], y_car_world);
@@ -376,11 +404,18 @@ void PurePursuit::transformandinterp_waypoint() {
 }
 
 double PurePursuit::p_controller() {
+
+    //double r = waypoints.lookahead_point_car.norm();  // r = sqrt(x^2 + y^2)
+    //double y = waypoints.lookahead_point_car(1);
+    //double angle = K_p * 2 * y / pow(r, 2);
+
+    
     double x = waypoints.lookahead_point_car(0);
     double y = waypoints.lookahead_point_car(1);
 
     // K_p를 포함하여 조향각 계산
     double angle = K_p * atan2(2 * wheelbase * y, x * x + y * y);
+    
 
     return angle;
 }
@@ -409,14 +444,14 @@ void PurePursuit::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr od
     x_car_world = odom_submsgObj->pose.pose.position.x;
     y_car_world = odom_submsgObj->pose.pose.position.y;
 
+    // 조향각 계산
+    double steering_angle = p_controller();
+
     // 웨이포인트 업데이트
-    get_waypoint();
+    get_waypoint(steering_angle);
 
     // 웨이포인트 변환 및 보간
     transformandinterp_waypoint();
-
-    // 조향각 계산
-    double steering_angle = p_controller();
 
     // 속도 설정 (조향각을 인자로 전달)
     set_velocity(steering_angle);
@@ -427,10 +462,10 @@ void PurePursuit::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr od
 
 void PurePursuit::scan_callback(const sensor_msgs::msg::LaserScan::SharedPtr scan_msg) {
     // LaserScan
-    RCLCPP_INFO(this->get_logger(), "스캔 메시지를 받았습니다. %zu개의 범위 값이 있습니다.", scan_msg->ranges.size());
+    //RCLCPP_INFO(this->get_logger(), "스캔 메시지를 받았습니다. %zu개의 범위 값이 있습니다.", scan_msg->ranges.size());
     last_scan_msg = scan_msg;
     // scan_msg->ranges[0]
-    checkBlock(1.0, 1.0);
+    //checkBlock(1.0, 1.0);
 }
 
 void PurePursuit::timer_callback() {

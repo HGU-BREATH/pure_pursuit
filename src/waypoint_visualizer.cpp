@@ -18,7 +18,7 @@
 #include "visualization_msgs/msg/marker_array.hpp"
 
 WaypointVisualizer::WaypointVisualizer() : Node("waypoint_visualizer_node") {
-    this->declare_parameter("waypoints_path", "/sim_ws/src/pure_pursuit/racelines/e7_floor5.csv");
+    this->declare_parameter("waypoints_path", "/home/onebean/sim_ws/src/racelines/IV2024WithoutV.csv");
     this->declare_parameter("rviz_waypoints_topic", "/waypoints");
 
     waypoints_path = this->get_parameter("waypoints_path").as_string();

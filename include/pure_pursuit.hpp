@@ -69,6 +69,9 @@ private:
     double min_lookahead;
     double max_lookahead;
     double lookahead_ratio;
+    double previous_lookahead;
+    double min_velocity;
+    double max_velocity;
     double steering_limit;
     double velocity_percentage;
     double curr_velocity;
@@ -114,7 +117,7 @@ private:
     void visualize_lookahead_point(Eigen::Vector3d &point);
     void visualize_current_point(Eigen::Vector3d &point);
 
-    void get_waypoint();
+    void get_waypoint(double steering_angle);
 
     void quat_to_rot(double q0, double q1, double q2, double q3);
 
@@ -132,9 +135,7 @@ private:
 
     void set_velocity(double steering_angle);
 
-    bool check_obstacle(double x, double y);
-
-    void checkBlock(double x, double y);  // 추가된 함수 선언
+    bool checkBlock(double x, double y);  // 추가된 함수 선언
 };
 
 #endif  // PURE_PURSUIT_HPP
