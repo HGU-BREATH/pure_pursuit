@@ -274,7 +274,6 @@ void PurePursuit::get_waypoint() {
     double x_car_world = this->x_car_world;
     double y_car_world = this->y_car_world;
 
-    double longest_distance = 0;
     int farthest_waypoint_index = -1;
     int start = waypoints.index;
     int end = (waypoints.index + waypoint_search_range) % num_waypoints;
